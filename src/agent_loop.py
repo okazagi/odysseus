@@ -3987,8 +3987,15 @@ async def stream_agent_loop(
             and not _active_document_relevant
             and not active_email
         ):
-            _relevant_tools = set(_WORKSPACE_TERMINUS_TOOLS)
-            logger.info("[tool-rag] Workspace file/terminal request; using Odysseus Terminus toolset")
+            # Keep MCP tools that retrieval/keyword hints already chose: they are
+            # user-installed integrations (e.g. an Excel server), and the fixed
+            # Terminus set would otherwise drop them for any file-ish request.
+            _kept_mcp = {t for t in _relevant_tools if t.startswith("mcp__")}
+            _relevant_tools = set(_WORKSPACE_TERMINUS_TOOLS) | _kept_mcp
+            logger.info(
+                "[tool-rag] Workspace file/terminal request; using Odysseus Terminus toolset (+%d MCP tools kept)",
+                len(_kept_mcp),
+            )
 
     # If this turn targets the open document, keep editing tools available
     # regardless of which selection path (RAG, keyword, caller-provided) ran.
