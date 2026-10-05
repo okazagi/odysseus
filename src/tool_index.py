@@ -158,6 +158,7 @@ class ToolIndex:
         migrate_legacy_collection(COLLECTION_NAME, self._lanes)
         self._fingerprint = ""
         self._mcp_generation = -1
+        self._mcp_tool_names: List[str] = []
         self._healthy = True
         logger.info("ToolIndex initialized (lanes=%s)", [lane.name for lane in self._lanes])
 
@@ -274,6 +275,7 @@ class ToolIndex:
                     ids.append(f"mcp_{name}")
                     metadatas.append({"tool_name": name, "tool_type": "mcp"})
 
+        self._mcp_tool_names = [m["tool_name"] for m in metadatas]
         if not docs:
             self._mcp_generation = gen
             return
@@ -345,6 +347,11 @@ class ToolIndex:
     )
 
     # Keyword hints: if the query mentions these words, force-include the tools.
+    _MCP_KEYWORD_HINTS = {
+        frozenset({"spreadsheet", "spreadsheets", "excel", "xlsx", "workbook", "workbooks", "worksheet"}):
+            {"create_workbook", "describe_workbook", "write_range", "read_range", "format_range"},
+    }
+
     _KEYWORD_HINTS = {
         # NOTE: "tell" was removed from this set. It fired on any "tell me ..."
         # request (e.g. "visit <url> and tell me the title"), force-including the
@@ -352,6 +359,11 @@ class ToolIndex:
         # believed it had only email tools and refused web/other tasks (#1707).
         frozenset({"email", "emails", "mail", "mails", "gmail", "googlemail", "message", "messages", "send", "reply", "replies", "inbox", "unread"}):
             {"list_email_accounts", "list_emails", "read_email", "scan_email_unsubscribes", "unsubscribe_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control"},
+        # Spreadsheet work: reading the source file is needed alongside the
+        # workbook tools, and top-K retrieval tends to return only formatting/
+        # chart tools. MCP-side tools are matched by suffix (see below).
+        frozenset({"spreadsheet", "spreadsheets", "excel", "xlsx", "workbook", "workbooks", "worksheet"}):
+            {"read_file"},
         frozenset({"calendar", "event", "meeting", "schedule", "appointment"}):
             {"manage_calendar"},
         # Detached background `bash` jobs (#!bg): check on / read output / kill.
@@ -531,6 +543,11 @@ class ToolIndex:
         for keywords, tools in self._KEYWORD_HINTS.items():
             if any(re.search(rf"\b{re.escape(kw)}\b", ql) for kw in keywords):
                 base.update(tools)
+        # MCP tools are named mcp__<server-id>__<tool>, so hint them by suffix.
+        for keywords, suffixes in self._MCP_KEYWORD_HINTS.items():
+            if any(re.search(rf"\b{re.escape(kw)}\b", ql) for kw in keywords):
+                base.update(n for n in self._mcp_tool_names
+                            if any(n.endswith("__" + sfx) for sfx in suffixes))
         # Structural scheduling-intent detection — typo-resilient (the literal
         # keyword "every day" misses "every dya"). Catches "every <word>",
         # daily/nightly/etc., or a clock time like "at 7:30 am" / "7am", which
